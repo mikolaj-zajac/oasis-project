@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 profil.json
 .venv/
+oasis.db

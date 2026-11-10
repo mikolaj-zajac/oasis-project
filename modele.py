@@ -193,6 +193,14 @@ class BazaRoslin:
         self._rosliny: dict[int, Roslina] = {}
         self._choroby: dict[int, Choroba] = {}
 
+    @property
+    def rosliny(self) -> list[Roslina]:
+        return list(self._rosliny.values())
+
+    @property
+    def choroby(self) -> list[Choroba]:
+        return list(self._choroby.values())
+
     @staticmethod
     def _sprawdz_admina(admin: Uzytkownik) -> None:
         if not admin.czy_administrator():
