@@ -1,0 +1,15 @@
+[project]
+name = "oasis"
+version = "0.1.0"
+description = "Dopasowanie roślin doniczkowych do użytkownika"
+requires-python = ">=3.10"
+dependencies = ["flet==1.1.2"]
+
+[tool.flet]
+product = "Oasis"
+org = "pl.oasis"
+
+[tool.flet.app]
+path = "."
+module = "app_mobile"
+exclude = ["oasis.db", "profil.json", ".venv", "build"]

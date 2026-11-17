@@ -176,10 +176,12 @@ class Uzytkownik:
     def profil(self) -> ProfilUzytkownika | None:
         return self._profil
 
-    def wypelnij_ankiete(self) -> ProfilUzytkownika:
-        from ankieta import ankieta_profilu  # lokalny import, bez cyklu
+    def wypelnij_ankiete(self, profil: ProfilUzytkownika | None = None) -> ProfilUzytkownika:
+        if profil is None:
+            from ankieta import ankieta_profilu  # lokalny import, bez cyklu
 
-        self._profil = ankieta_profilu()
+            profil = ankieta_profilu()
+        self._profil = profil
         return self._profil
 
     def czy_administrator(self) -> bool:

@@ -10,11 +10,27 @@ python3 main.py
 
 Przy pierwszym uruchomieniu tworzony jest plik `oasis.db` i wypełniany przykładowymi roślinami i chorobami.
 
+### Wersja mobilna (Flet)
+
+```
+python3 -m venv .venv && .venv/bin/pip install "flet[all]==1.1.2"
+.venv/bin/flet run app_mobile.py              # okno na komputerze
+.venv/bin/flet run --android app_mobile.py    # podgląd w aplikacji Flet na telefonie (QR)
+.venv/bin/flet build apk                      # plik .apk (Android)
+.venv/bin/flet build ipa                      # iOS (wymaga Xcode)
+PORT=8765 .venv/bin/python app_mobile.py      # strona WWW pod http://<IP>:8765
+```
+
+Gdy ustawiona jest zmienna `PORT`, aplikacja działa jako serwer WWW (Python wykonuje się na serwerze, przeglądarka tylko wyświetla interfejs). Zależności dla hostingu: `requirements.txt`, polecenie startowe `python app_mobile.py`.
+
+`app_mobile.py` korzysta z tych samych modeli, walidatorów i `Repozytorium` co wersja konsolowa. Baza i `profil.json` zapisywane są w katalogu danych aplikacji (`FLET_APP_STORAGE_DATA`). Konfiguracja budowania: `pyproject.toml`.
+
 ## Struktura
 
 | Plik | Rola |
 |------|------|
-| `main.py` | Punkt wejścia: otwiera bazę, uruchamia ankietę, zapisuje użytkownika, wypisuje dopasowane rośliny |
+| `app_mobile.py` | GUI mobilne (Flet): formularz ankiety i karty dopasowanych roślin |
+| `main.py` | Punkt wejścia konsolowy: otwiera bazę, uruchamia ankietę, zapisuje użytkownika, wypisuje dopasowane rośliny |
 | `enums.py` | `Rola`, `PoziomSlonca`, `PoziomCzasu`, `Doswiadczenie` |
 | `modele.py` | Klasy domenowe: `Objaw`, `Choroba`, `Roslina`, `ProfilUzytkownika`, `Uzytkownik`, `BazaRoslin` |
 | `ankieta.py` | Walidacja wejścia i ankieta startowa (imię, e-mail, czas, słońce, doświadczenie) |
