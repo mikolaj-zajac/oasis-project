@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from enums import Rola, PoziomSlonca, PoziomCzasu, Doswiadczenie
@@ -235,3 +236,48 @@ class BazaRoslin:
             return self._rosliny[id]
         except KeyError:
             raise KeyError(f"Brak rośliny o id {id}.") from None
+
+
+class RoslinaUzytkownika:
+    """Roślina w kolekcji użytkownika wraz z historią podlewania."""
+
+    def __init__(self, id: int, roslina: Roslina, dodano: date, podlewania: list[date] | None = None):
+        self._id = id
+        self._roslina = roslina
+        self._dodano = dodano
+        self._podlewania: list[date] = sorted(set(podlewania or []))
+
+    @property
+    def id(self) -> int:
+        return self._id
+
+    @property
+    def roslina(self) -> Roslina:
+        return self._roslina
+
+    @property
+    def dodano(self) -> date:
+        return self._dodano
+
+    @property
+    def ostatnie_podlanie(self) -> date | None:
+        return self._podlewania[-1] if self._podlewania else None
+
+    def nastepne_podlanie(self) -> date:
+        if self.ostatnie_podlanie is None:
+            return self._dodano
+        return self.ostatnie_podlanie + timedelta(days=self._roslina.cykl_nawadniania_dni)
+
+    def dni_do_podlania(self, dzis: date) -> int:
+        return (self.nastepne_podlanie() - dzis).days
+
+    def czy_podlana(self, dzis: date) -> bool:
+        return dzis in self._podlewania
+
+    def podlej(self, dzis: date) -> None:
+        if dzis not in self._podlewania:
+            self._podlewania = sorted([*self._podlewania, dzis])
+
+    def cofnij_podlanie(self, dzis: date) -> None:
+        if dzis in self._podlewania:
+            self._podlewania.remove(dzis)

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 import sqlite3
+from datetime import date
 
 from enums import Rola, PoziomSlonca, PoziomCzasu, Doswiadczenie
-from modele import BazaRoslin, Choroba, ProfilUzytkownika, Roslina, Uzytkownik
+from modele import BazaRoslin, Choroba, ProfilUzytkownika, Roslina, RoslinaUzytkownika, Uzytkownik
 
 SCHEMAT = """
 CREATE TABLE IF NOT EXISTS choroby (
@@ -46,11 +49,44 @@ CREATE TABLE IF NOT EXISTS profile (
     naslonecznienie_domu TEXT NOT NULL,
     doswiadczenie TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hasla (
+    uzytkownik_id INTEGER PRIMARY KEY REFERENCES uzytkownicy(id) ON DELETE CASCADE,
+    sol TEXT NOT NULL,
+    skrot TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sesje (
+    token TEXT PRIMARY KEY,
+    uzytkownik_id INTEGER NOT NULL REFERENCES uzytkownicy(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS moje_rosliny (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uzytkownik_id INTEGER NOT NULL REFERENCES uzytkownicy(id) ON DELETE CASCADE,
+    roslina_id INTEGER NOT NULL REFERENCES rosliny(id) ON DELETE CASCADE,
+    dodano TEXT NOT NULL,
+    UNIQUE (uzytkownik_id, roslina_id)
+);
+CREATE TABLE IF NOT EXISTS podlewania (
+    moja_roslina_id INTEGER NOT NULL REFERENCES moje_rosliny(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    PRIMARY KEY (moja_roslina_id, data)
+);
 """
+
+ITERACJE_HASLA = 200_000
 
 
 class BladBazy(RuntimeError):
     pass
+
+
+class BladKonta(BladBazy):
+    pass
+
+
+def _skrot_hasla(haslo: str, sol: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", haslo.encode("utf-8"), bytes.fromhex(sol), ITERACJE_HASLA
+    ).hex()
 
 
 class Repozytorium:
@@ -180,3 +216,149 @@ class Repozytorium:
             PoziomSlonca[w["naslonecznienie_domu"]],
             Doswiadczenie[w["doswiadczenie"]],
         )
+
+    def wczytaj_uzytkownika(self, email: str) -> Uzytkownik | None:
+        try:
+            w = self._polaczenie.execute(
+                "SELECT * FROM uzytkownicy WHERE email = ?", (email,)
+            ).fetchone()
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się wczytać użytkownika: {e}") from e
+        if w is None:
+            return None
+        uzytkownik = Uzytkownik(w["id"], w["nazwa"], w["email"], Rola(w["rola"]))
+        profil = self.wczytaj_profil(email)
+        if profil is not None:
+            uzytkownik.wypelnij_ankiete(profil)
+        return uzytkownik
+
+    def zarejestruj(self, uzytkownik: Uzytkownik, haslo: str) -> Uzytkownik:
+        try:
+            istnieje = self._polaczenie.execute(
+                "SELECT 1 FROM hasla h JOIN uzytkownicy u ON u.id = h.uzytkownik_id "
+                "WHERE u.email = ?",
+                (uzytkownik.email,),
+            ).fetchone()
+            if istnieje:
+                raise BladKonta("Konto z tym adresem e-mail już istnieje.")
+            id_uzytkownika = self.zapisz_uzytkownika(uzytkownik)
+            sol = secrets.token_hex(16)
+            with self._polaczenie:
+                self._polaczenie.execute(
+                    "INSERT INTO hasla VALUES (?, ?, ?)",
+                    (id_uzytkownika, sol, _skrot_hasla(haslo, sol)),
+                )
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się założyć konta: {e}") from e
+        return self.wczytaj_uzytkownika(uzytkownik.email)
+
+    def zaloguj(self, email: str, haslo: str) -> Uzytkownik:
+        try:
+            w = self._polaczenie.execute(
+                "SELECT h.sol, h.skrot FROM hasla h JOIN uzytkownicy u ON u.id = h.uzytkownik_id "
+                "WHERE u.email = ?",
+                (email,),
+            ).fetchone()
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się zalogować: {e}") from e
+        if w is None or not secrets.compare_digest(_skrot_hasla(haslo, w["sol"]), w["skrot"]):
+            raise BladKonta("Nieprawidłowy e-mail lub hasło.")
+        return self.wczytaj_uzytkownika(email)
+
+    def utworz_sesje(self, uzytkownik: Uzytkownik) -> str:
+        token = secrets.token_urlsafe(32)
+        try:
+            with self._polaczenie:
+                self._polaczenie.execute(
+                    "INSERT INTO sesje (token, uzytkownik_id) "
+                    "SELECT ?, id FROM uzytkownicy WHERE email = ?",
+                    (token, uzytkownik.email),
+                )
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się utworzyć sesji: {e}") from e
+        return token
+
+    def uzytkownik_sesji(self, token: str) -> Uzytkownik | None:
+        try:
+            w = self._polaczenie.execute(
+                "SELECT u.email FROM sesje s JOIN uzytkownicy u ON u.id = s.uzytkownik_id "
+                "WHERE s.token = ?",
+                (token,),
+            ).fetchone()
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się wczytać sesji: {e}") from e
+        return self.wczytaj_uzytkownika(w["email"]) if w else None
+
+    def usun_sesje(self, token: str) -> None:
+        try:
+            with self._polaczenie:
+                self._polaczenie.execute("DELETE FROM sesje WHERE token = ?", (token,))
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się wylogować: {e}") from e
+
+    def dodaj_do_kolekcji(self, uzytkownik: Uzytkownik, roslina: Roslina, dzis: date) -> None:
+        try:
+            with self._polaczenie:
+                self._polaczenie.execute(
+                    "INSERT OR IGNORE INTO moje_rosliny (uzytkownik_id, roslina_id, dodano) "
+                    "SELECT id, ?, ? FROM uzytkownicy WHERE email = ?",
+                    (roslina.id, dzis.isoformat(), uzytkownik.email),
+                )
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się dodać rośliny: {e}") from e
+
+    def usun_z_kolekcji(self, uzytkownik: Uzytkownik, moja: RoslinaUzytkownika) -> None:
+        try:
+            with self._polaczenie:
+                self._polaczenie.execute(
+                    "DELETE FROM moje_rosliny WHERE id = ? AND uzytkownik_id = "
+                    "(SELECT id FROM uzytkownicy WHERE email = ?)",
+                    (moja.id, uzytkownik.email),
+                )
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się usunąć rośliny: {e}") from e
+
+    def zapisz_podlanie(
+        self, uzytkownik: Uzytkownik, moja: RoslinaUzytkownika, dzien: date, podlana: bool
+    ) -> None:
+        wlasciciel = (
+            "SELECT m.id FROM moje_rosliny m JOIN uzytkownicy u ON u.id = m.uzytkownik_id "
+            "WHERE m.id = ? AND u.email = ?"
+        )
+        try:
+            with self._polaczenie:
+                if podlana:
+                    self._polaczenie.execute(
+                        f"INSERT OR IGNORE INTO podlewania SELECT id, ? FROM ({wlasciciel})",
+                        (dzien.isoformat(), moja.id, uzytkownik.email),
+                    )
+                else:
+                    self._polaczenie.execute(
+                        f"DELETE FROM podlewania WHERE data = ? AND moja_roslina_id IN ({wlasciciel})",
+                        (dzien.isoformat(), moja.id, uzytkownik.email),
+                    )
+        except sqlite3.Error as e:
+            raise BladBazy(f"Nie udało się zapisać podlania: {e}") from e
+
+    def wczytaj_kolekcje(self, uzytkownik: Uzytkownik, baza: BazaRoslin) -> list[RoslinaUzytkownika]:
+        try:
+            wiersze = self._polaczenie.execute(
+                "SELECT m.id, m.roslina_id, m.dodano FROM moje_rosliny m "
+                "JOIN uzytkownicy u ON u.id = m.uzytkownik_id WHERE u.email = ? ORDER BY m.id",
+                (uzytkownik.email,),
+            ).fetchall()
+            kolekcja = []
+            for w in wiersze:
+                podlewania = [
+                    date.fromisoformat(p["data"])
+                    for p in self._polaczenie.execute(
+                        "SELECT data FROM podlewania WHERE moja_roslina_id = ?", (w["id"],)
+                    )
+                ]
+                kolekcja.append(RoslinaUzytkownika(
+                    w["id"], baza.pobierz_rosline(w["roslina_id"]),
+                    date.fromisoformat(w["dodano"]), podlewania,
+                ))
+        except (sqlite3.Error, KeyError, ValueError) as e:
+            raise BladBazy(f"Nie udało się wczytać kolekcji: {e}") from e
+        return kolekcja

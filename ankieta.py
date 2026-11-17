@@ -26,6 +26,14 @@ def waliduj_email(tekst: str) -> str:
     return tekst.lower()
 
 
+def waliduj_haslo(tekst: str) -> str:
+    if len(tekst) < 6:
+        raise BladWalidacji("Hasło musi mieć co najmniej 6 znaków.")
+    if len(tekst) > 128:
+        raise BladWalidacji("Hasło może mieć najwyżej 128 znaków.")
+    return tekst
+
+
 def waliduj_wybor(tekst: str, enum_cls: type[Enum]) -> Enum:
     opcje = list(enum_cls)
     try:
